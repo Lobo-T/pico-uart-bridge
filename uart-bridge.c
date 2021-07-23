@@ -16,6 +16,9 @@
 #endif /* MIN */
 
 #define LED_PIN 25
+#define TXEN 14
+#define RXENn 15
+#define STATLED 19
 
 #define BUFFER_SIZE 64
 
@@ -45,12 +48,12 @@ typedef struct {
 const uart_id_t UART_ID[CFG_TUD_CDC] = {
 	{
 		.inst = uart0,
-		.tx_pin = 0,
-		.rx_pin = 1,
+		.tx_pin = 12,
+		.rx_pin = 13,
 	}, {
 		.inst = uart1,
-		.tx_pin = 4,
-		.rx_pin = 5,
+		.tx_pin = 20,
+		.rx_pin = 21,
 	}
 };
 
@@ -92,6 +95,8 @@ static inline uint stopbits_usb2uart(uint8_t stop_bits)
 	}
 }
 
+int u0baud;
+
 void update_uart_cfg(uint8_t itf)
 {
 	const uart_id_t *ui = &UART_ID[itf];
@@ -101,6 +106,7 @@ void update_uart_cfg(uint8_t itf)
 
 	if (ud->usb_lc.bit_rate != ud->uart_lc.bit_rate) {
 		uart_set_baudrate(ui->inst, ud->usb_lc.bit_rate);
+		u0baud = ud->usb_lc.bit_rate;
 		ud->uart_lc.bit_rate = ud->usb_lc.bit_rate;
 	}
 
@@ -216,12 +222,30 @@ void uart_write_bytes(uint8_t itf) {
 
 	if (ud->usb_pos) {
 		const uart_id_t *ui = &UART_ID[itf];
-
+				
 		mutex_enter_blocking(&ud->usb_mtx);
+		if(ui->inst == uart0){			
+			gpio_put(STATLED,1);
+			gpio_put(RXENn,1);
+			gpio_put(TXEN,1);
+			sleep_ms(1/u0baud*11*3.5*1000);
+		}
 
 		uart_write_blocking(ui->inst, ud->usb_buffer, ud->usb_pos);
 		ud->usb_pos = 0;
 
+		if(ui->inst == uart0){
+			uart_tx_wait_blocking(ui->inst);
+			sleep_ms(1/u0baud*11*3.5*1000);
+			//Flush RX UART buffer
+			while(uart_is_readable(ui->inst)){
+				uart_getc(ui->inst);
+			}
+			gpio_put(STATLED,0);
+			gpio_put(TXEN,0);
+			gpio_put(RXENn,0);
+		}
+			
 		mutex_exit(&ud->usb_mtx);
 	}
 }
@@ -272,6 +296,15 @@ int main(void)
 
 	gpio_init(LED_PIN);
 	gpio_set_dir(LED_PIN, GPIO_OUT);
+	gpio_init(RXENn);
+	gpio_set_dir(RXENn, GPIO_OUT);
+	gpio_put(RXENn,0);
+	gpio_init(TXEN);
+	gpio_set_dir(TXEN, GPIO_OUT);
+	gpio_put(TXEN,0);
+	gpio_init(STATLED);
+	gpio_set_dir(STATLED, GPIO_OUT);
+	gpio_put(STATLED,0);
 
 	multicore_launch_core1(core1_entry);
 
